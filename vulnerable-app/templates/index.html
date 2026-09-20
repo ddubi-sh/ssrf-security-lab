@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LinkLens</title>
+  <meta name="description" content="Enter a URL to preview its content." />
+  <!-- 외부 CDN / 외부 폰트 / 외부 스크립트를 사용하지 않습니다. 로컬 정적 파일만 사용합니다. -->
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+</head>
+<body>
+
+  <header class="site-header">
+    <div class="container">
+      <a class="logo" href="/">
+        <span class="logo-mark" aria-hidden="true"></span>
+        <span class="logo-text">LinkLens</span>
+      </a>
+    </div>
+  </header>
+
+  <main class="container">
+
+    <section class="intro">
+      <h1>Preview any link</h1>
+      <p class="tagline">Enter a URL to preview its content.</p>
+    </section>
+
+    <section class="card">
+      <form id="preview-form" autocomplete="off" novalidate>
+        <label class="field-label" for="url-input">URL</label>
+        <div class="input-row">
+          <input
+            id="url-input"
+            name="url"
+            type="text"
+            spellcheck="false"
+            placeholder="https://example.com"
+          />
+          <button type="submit" id="preview-button" class="btn-primary">Preview</button>
+        </div>
+        <p class="example-line">
+          Example:
+          <button type="button" class="example-link" id="example-url">http://safe-service:8000/public</button>
+        </p>
+      </form>
+
+      <div id="loading" class="loading" role="status" aria-live="polite" hidden>
+        <span class="spinner" aria-hidden="true"></span>
+        <span>Loading preview…</span>
+      </div>
+
+      <p id="error-message" class="error-message" role="alert" hidden></p>
+    </section>
+
+    <section id="result-card" class="card result-card" hidden>
+      <div class="result-meta">
+        <div class="meta-item meta-url">
+          <span class="meta-label">Requested URL</span>
+          <span class="meta-value" id="result-url"></span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Status Code</span>
+          <span class="meta-value" id="result-status"></span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Response Time</span>
+          <span class="meta-value" id="result-time"></span>
+        </div>
+      </div>
+
+      <h2 class="result-heading">Response</h2>
+      <!-- 응답은 항상 textContent 로만 넣습니다. innerHTML 을 사용하지 않습니다. -->
+      <pre id="result-body"></pre>
+    </section>
+
+  </main>
+
+  <footer class="site-footer">
+    <div class="container">
+      <p>&copy; LinkLens</p>
+    </div>
+  </footer>
+
+  <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>
