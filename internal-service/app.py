@@ -1,53 +1,95 @@
 """
-internal-service : 원래라면 "내부에서만" 접근할 수 있어야 하는 관리자 서비스 역할입니다.
+monitor-service : LinkLens 가 저장한 링크의 상태를 주기적으로 점검하는 내부 서비스입니다.
 
-- 컨테이너 내부에서 8001번 포트를 사용합니다.
-- 호스트에는 포트를 공개하지 않습니다(브라우저로 직접 접근할 수 없습니다).
-- 같은 Docker 네트워크 안에서 http://internal-service:8001/admin 으로 접근할 수 있습니다.
-
-SSRF 실습의 목표는 "사용자가 직접 접근할 수 없는 이 서비스"를
-취약한 vulnerable-app 을 통해 대신 호출하게 만드는 것입니다.
+- 컨테이너 내부 8000번 포트, 호스트에는 공개하지 않습니다.
+- 아래 데이터는 모두 실습용 가상 운영 데이터입니다. 실제 계정·키·개인정보가 아닙니다.
 """
 
 import logging
 
-from flask import Flask, jsonify
+from flask import Flask, jsonify, request
 
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s [internal-service] %(message)s",
+    format="%(asctime)s [monitor-service] %(message)s",
 )
+logging.getLogger("werkzeug").setLevel(logging.WARNING)
 
 app = Flask(__name__)
 
+# 조회 가능한 점검 리포트 (실습용 가상 데이터). 그 밖의 id 는 404 입니다.
+REPORTS = {
+    "2026-09-28": {
+        "report_id": "2026-09-28",
+        "generated_at": "2026-09-28T02:00:00Z",
+        "window": "최근 24시간",
+        "summary": {"checked": 128, "reachable": 124, "failed": 4},
+        "recent_failures": [
+            {"target": "content-service", "path": "/articles/99", "status": 404},
+            {"target": "content-service", "path": "/legacy", "status": 500},
+        ],
+        "worker_nodes": ["monitor-a", "monitor-b"],
+        "note": "내부 진단용 데이터",
+    },
+}
+REPORTS["latest"] = REPORTS["2026-09-28"]
 
-@app.get("/admin")
-def admin():
-    """
-    내부 관리자용으로 가정한 엔드포인트입니다.
 
-    주의: 아래 "SSRF_SUCCESS" 는 실제 비밀번호나 API 키가 아닙니다.
-    공격이 성공했는지 학생이 눈으로 확인하기 위한 교육용 표시 문자열일 뿐입니다.
-    """
-    # 공격이 성공하면 이 로그가 남습니다. (docker compose logs internal-service)
-    app.logger.info("[INTERNAL SERVICE] /admin was requested")
+@app.after_request
+def log_request(response):
+    """요청 경로, 요청을 보낸 컨테이너 주소, 응답 상태를 남깁니다."""
+    if request.path != "/health":
+        app.logger.info(
+            "%s %s from=%s -> %s", request.method, request.path, request.remote_addr, response.status_code
+        )
+    return response
 
+
+@app.get("/")
+def index():
+    """서비스 소개. 상세 상태는 /status 로 안내만 합니다."""
     return jsonify(
         {
-            "service": "internal-service",
-            "message": "This endpoint should not be reachable by users.",
-            # 교육용 표시 문자열 (실제 비밀 아님)
-            "secret": "SSRF_SUCCESS",
+            "service": "monitor-service",
+            "description": "내부 링크 상태 점검 서비스",
+            "info": "운영 상태는 /status 에서 확인할 수 있습니다",
         }
     )
 
 
+@app.get("/status")
+def status():
+    """일반 운영 상태입니다. 상세 리포트는 여기서 조회 경로만 안내합니다."""
+    return jsonify(
+        {
+            "service": "monitor-service",
+            "state": "running",
+            "queue_depth": 3,
+            "last_run": "2026-09-28T02:00:00Z",
+            "reports": {"path": "/reports/{id}", "latest_id": "2026-09-28"},
+            "note": "상세 점검 리포트는 reports 경로에서 조회합니다",
+        }
+    )
+
+
+@app.get("/reports/<report_id>")
+def report(report_id):
+    """특정 점검 리포트입니다. (실습용 가상 운영 데이터)"""
+    item = REPORTS.get(report_id)
+    if item is None:
+        return jsonify({"service": "monitor-service", "error": "리포트를 찾을 수 없습니다"}), 404
+    return jsonify(item)
+
+
+@app.errorhandler(404)
+def not_found(_error):
+    return jsonify({"service": "monitor-service", "error": "Not found"}), 404
+
+
 @app.get("/health")
 def health():
-    """Docker healthcheck 용 엔드포인트입니다. 항상 200을 반환합니다."""
     return jsonify({"status": "ok"}), 200
 
 
 if __name__ == "__main__":
-    # 컨테이너 내부 전용 개발 서버입니다. 호스트에는 포트를 공개하지 않습니다.
-    app.run(host="0.0.0.0", port=8001)
+    app.run(host="0.0.0.0", port=8000)

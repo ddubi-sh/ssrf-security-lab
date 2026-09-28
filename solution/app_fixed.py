@@ -1,5 +1,5 @@
 """
-solution/app_fixed.py : SSRF 취약점을 수정한 완성본입니다.
+solution/app_fixed.py : LinkLens 의 SSRF 취약점을 수정한 완성본입니다.
 
 사용 방법
 ---------
@@ -10,34 +10,117 @@ solution/app_fixed.py : SSRF 취약점을 수정한 완성본입니다.
 -------------
 "위험한 것을 골라 막는" 차단 목록(blocklist)이 아니라,
 "허용된 것만 통과시키는" 허용 목록(allowlist) 방식으로 검증합니다.
-그리고 문자열 검색(`"localhost" in url`)이 아니라
-urlparse() 로 URL을 구성요소(스킴/호스트/포트/경로 등)로 나눠서 검사합니다.
+문자열 검색(`"localhost" in url`)이 아니라 urlparse() 로 URL을
+구성요소(스킴/호스트/포트/경로 등)로 나눠서 검사합니다.
+
+수정 대상은 /preview 하나입니다.
+- /api/url-check, /api/links/<id> 는 서버가 외부로 요청하지 않으므로 그대로 둡니다.
+- 화면 기능(3종)과 로그 형식은 취약 버전과 동일하게 유지합니다.
 """
 
+import json
 import logging
+import re
+import time
 from urllib.parse import urlparse
 
 import requests
 from flask import Flask, jsonify, render_template, request
 
 # ----------------------------------------------------------------------------
-# 허용 목록 (이 실습에서 통과시킬 유일한 요청)
+# 허용 목록 : LinkLens 가 미리보기를 허용하는 것은 content-service 의 공개 콘텐츠뿐입니다.
+# 내부 monitor-service 로는 애초에 요청이 나가지 않습니다.
 # ----------------------------------------------------------------------------
 ALLOWED_SCHEME = "http"
-ALLOWED_HOST = "safe-service"
+ALLOWED_HOST = "content-service"
 ALLOWED_PORT = 8000
-ALLOWED_PATH = "/public"
+ALLOWED_PATHS = ("/public", "/articles/1", "/articles/2", "/notice", "/status")
 
-MAX_URL_LENGTH = 2048            # 지나치게 긴 URL은 파싱 전에 거부합니다.
-REQUEST_TIMEOUT_SECONDS = 3      # 응답이 없어도 3초 뒤에는 포기합니다.
-MAX_CONTENT_BYTES = 4096         # 응답 본문은 최대 4KB 까지만 돌려줍니다.
+REQUEST_TIMEOUT_SECONDS = 3
+MAX_CONTENT_BYTES = 4096
+MAX_URL_LENGTH = 2048
 
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s [vulnerable-app-fixed] %(message)s",
+    format="%(asctime)s [linklens] %(message)s",
 )
+logging.getLogger("werkzeug").setLevel(logging.WARNING)
 
 app = Flask(__name__)
+
+SAVED_LINKS = {
+    1: {
+        "id": 1,
+        "url": "http://content-service:8000/public",
+        "title": "공개 공지",
+        "description": "서비스 공지 페이지.",
+        "saved_at": "2026-09-01T09:00:00Z",
+    },
+    2: {
+        "id": 2,
+        "url": "http://content-service:8000/articles/99",
+        "title": "지난 캠페인 안내",
+        "description": "이전 캠페인 소개 페이지.",
+        "saved_at": "2026-09-03T14:20:00Z",
+    },
+    3: {
+        "id": 3,
+        "url": "http://content-service:8000/legacy",
+        "title": "이전 랜딩 페이지",
+        "description": "구버전 랜딩 페이지.",
+        "saved_at": "2026-09-10T11:05:00Z",
+    },
+    4: {
+        "id": 4,
+        "url": "http://content-service:8000/notice",
+        "title": "운영 공지",
+        "description": "서비스 운영 관련 공지사항.",
+        "saved_at": "2026-09-20T09:10:00Z",
+    },
+}
+
+TITLE_PATTERN = re.compile(r"<title>(.*?)</title>", re.IGNORECASE | re.DOTALL)
+
+
+def describe_target(url):
+    """로그용으로 URL의 목적지(호스트/포트/경로)를 나눠 보여 줍니다."""
+    try:
+        parsed = urlparse(url)
+        return "scheme=%s host=%s port=%s path=%s" % (
+            parsed.scheme or "-",
+            parsed.hostname or "-",
+            parsed.port or "-",
+            parsed.path or "/",
+        )
+    except ValueError:
+        return "unparsable"
+
+
+def extract_title(body_text, content_type):
+    if "html" in content_type:
+        match = TITLE_PATTERN.search(body_text)
+        if match:
+            return match.group(1).strip()
+    if "json" in content_type:
+        try:
+            data = json.loads(body_text)
+            if isinstance(data, dict) and isinstance(data.get("title"), str):
+                return data["title"]
+        except ValueError:
+            pass
+    return None
+
+
+def build_content(response, content_type, body_text):
+    """JSON 응답은 파싱해 객체로, 그 외에는 문자열로 content 를 만듭니다. 반환: (content, title)"""
+    if "json" in content_type.lower() and len(response.content) <= 65536:
+        try:
+            data = response.json()
+        except ValueError:
+            return body_text, extract_title(body_text, content_type)
+        title = data.get("title") if isinstance(data, dict) and isinstance(data.get("title"), str) else None
+        return data, title
+    return body_text, extract_title(body_text, content_type)
 
 
 def validate_url(url):
@@ -48,59 +131,53 @@ def validate_url(url):
         (True, None)            - 검증 통과
         (False, "이유 문자열")   - 검증 실패
 
-    실패 이유는 학생이 이해할 수 있을 만큼만 알려 주고,
-    내부 구조(허용 호스트 이름, 내부 포트 등)는 자세히 노출하지 않습니다.
+    실패 이유는 학생이 이해할 정도만 알려 주고,
+    내부 구조(허용 호스트/포트)를 자세히 노출하지 않습니다.
     """
-    # 1) 타입 검사 : 문자열이 아니면 파싱할 수 없습니다.
+    # 1) 타입 검사
     if not isinstance(url, str):
         return False, "URL must be a string"
-
     url = url.strip()
     if not url:
         return False, "URL is required"
 
-    # 2) 길이 제한 : 비정상적으로 긴 입력을 미리 잘라냅니다.
+    # 2) 길이 제한 (파싱 전에 비정상적으로 긴 입력 차단)
     if len(url) > MAX_URL_LENGTH:
         return False, "URL is too long"
 
-    # 3) 파싱 : 잘못된 형태의 URL은 ValueError 를 던질 수 있습니다.
-    #    (예: 대괄호가 깨진 IPv6 주소, 포트 자리에 숫자가 아닌 값)
+    # 3) 파싱 (형식이 잘못되면 ValueError 가능)
     try:
         parsed = urlparse(url)
-        port = parsed.port          # 포트 형식이 잘못되면 여기서 ValueError
-        hostname = parsed.hostname  # 소문자로 정규화된 호스트
+        port = parsed.port          # 포트 형식 오류 시 ValueError
+        hostname = parsed.hostname  # 소문자 정규화된 호스트
     except ValueError:
         return False, "URL could not be parsed"
 
-    # 4) 스킴 검사 : http 만 허용합니다.
-    #    file://, gopher://, ftp://, dict:// 같은 스킴은 SSRF 를 더 위험하게 만듭니다.
+    # 4) 스킴 : http 만 허용 (file/gopher/ftp/dict 등 거부)
     if parsed.scheme != ALLOWED_SCHEME:
         return False, "URL scheme is not allowed"
 
-    # 5) 사용자정보(username:password@) 가 있으면 거부합니다.
-    #    http://safe-service@internal-service:8001/ 처럼
-    #    사람 눈을 속이는 형태를 막기 위해서입니다.
+    # 5) 사용자정보(user:pass@) 거부 : http://content-service@monitor-service/ 눈속임 차단
     if parsed.username is not None or parsed.password is not None:
         return False, "URL must not contain user information"
 
-    # 6) 호스트 검사 : 정확히 허용된 호스트만 통과합니다.
+    # 6) 호스트 : 정확히 허용된 호스트만 (monitor-service 등 내부 호스트 거부)
     if hostname != ALLOWED_HOST:
         return False, "URL host is not allowed"
 
-    # 7) 포트 검사 : 정확히 허용된 포트만 통과합니다.
-    #    포트를 생략한 http://safe-service/public 은 80 포트를 뜻하므로 거부됩니다.
+    # 7) 포트 : 정확히 허용된 포트만 (생략 시 80 → 거부)
     if port != ALLOWED_PORT:
         return False, "URL port is not allowed"
 
-    # 8) 경로 검사 : 정확히 허용된 경로만 통과합니다.
-    if parsed.path != ALLOWED_PATH:
+    # 8) 경로 : 허용된 경로 목록만 (monitor-service 의 /reports/... 등 내부 경로 거부)
+    if parsed.path not in ALLOWED_PATHS:
         return False, "URL path is not allowed"
 
-    # 9) query string : 이번 실습에서는 필요하지 않으므로 거부합니다.
+    # 9) query : 이번 실습에서는 불필요하므로 거부
     if parsed.query:
         return False, "URL must not contain a query string"
 
-    # 10) fragment(#...) : 서버 요청에는 필요 없으므로 거부합니다.
+    # 10) fragment(#...) : 서버 요청에는 불필요하므로 거부
     if parsed.fragment:
         return False, "URL must not contain a fragment"
 
@@ -109,13 +186,11 @@ def validate_url(url):
 
 @app.get("/")
 def index():
-    """URL 미리보기 화면(HTML)을 보여줍니다."""
     return render_template("index.html")
 
 
 @app.get("/health")
 def health():
-    """Docker healthcheck 용 엔드포인트입니다. 항상 200을 반환합니다."""
     return jsonify({"status": "ok"}), 200
 
 
@@ -129,40 +204,108 @@ def preview():
     url = data.get("url")
 
     # ------------------------------------------------------------------
-    # 검증 : 여기를 통과하지 못하면 서버는 아무 요청도 보내지 않습니다.
-    # (Sink 인 requests.get() 에 도달하기 전에 막는 것이 핵심입니다.)
+    # 검증 : 통과하지 못하면 서버는 아무 요청도 보내지 않습니다.
+    # (Sink 인 requests.get() 에 도달하기 전에 막는 것이 핵심)
     # ------------------------------------------------------------------
     is_valid, reason = validate_url(url)
     if not is_valid:
-        app.logger.info("차단된 요청: %s (%s)", url, reason)
+        app.logger.info(
+            "blocked preview url=%s reason=%s app_returned=400", url, reason
+        )
         return jsonify({"error": "Blocked by URL policy", "reason": reason}), 400
 
     url = url.strip()
-    app.logger.info("허용된 대상 URL: %s", url)
+    app.logger.info("preview requested url=%s", url)
 
+    started = time.monotonic()
     try:
-        # allow_redirects=False : 대상 서버가 302 로 내부 주소를 가리켜도 따라가지 않습니다.
-        # timeout : 응답이 없는 서버 때문에 스레드가 묶이는 것을 막습니다.
         response = requests.get(
             url,
             timeout=REQUEST_TIMEOUT_SECONDS,
             allow_redirects=False,
         )
-    except requests.RequestException:
-        # 내부 예외나 스택 트레이스는 사용자에게 노출하지 않습니다.
-        app.logger.info("요청 실패: %s", url)
-        return jsonify({"error": "Request failed"}), 502
+    except requests.RequestException as error:
+        app.logger.info(
+            "outbound GET %s -> upstream_status=- app_returned=502 result=failed (%s)",
+            describe_target(url),
+            type(error).__name__,
+        )
+        return jsonify({"requested_url": url, "fetched": False, "error": "Could not fetch this URL"}), 502
 
+    elapsed_ms = int((time.monotonic() - started) * 1000)
+    content_type = response.headers.get("Content-Type", "")
     body_text = response.content[:MAX_CONTENT_BYTES].decode("utf-8", errors="replace")
-    app.logger.info("대상 서버 응답 상태 코드: %s (%s)", response.status_code, url)
+    content_value, title = build_content(response, content_type, body_text)
+
+    app.logger.info(
+        "outbound GET %s -> upstream_status=%s app_returned=200 bytes=%s elapsed_ms=%s",
+        describe_target(url),
+        response.status_code,
+        len(response.content),
+        elapsed_ms,
+    )
 
     return jsonify(
         {
             "requested_url": url,
+            "fetched": True,
             "status_code": response.status_code,
-            "content": body_text,
+            "content_type": content_type,
+            "title": title,
+            "content": content_value,
         }
     )
+
+
+@app.get("/api/links")
+def list_links():
+    return jsonify({"links": [
+        {"id": link["id"], "title": link["title"]} for link in SAVED_LINKS.values()
+    ]})
+
+
+@app.get("/api/links/<int:link_id>")
+def link_detail(link_id):
+    link = SAVED_LINKS.get(link_id)
+    app.logger.info("saved link detail id=%s found=%s", link_id, link is not None)
+    if link is None:
+        return jsonify({"error": "Link not found"}), 404
+    return jsonify(link)
+
+
+@app.post("/api/url-check")
+def url_check():
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "JSON body is required"}), 400
+
+    url = data.get("url")
+    if not isinstance(url, str) or not url.strip():
+        return jsonify({"valid": False, "problems": ["URL is empty"]})
+    url = url.strip()
+
+    problems = []
+    components = {}
+    if len(url) > MAX_URL_LENGTH:
+        problems.append("URL is too long")
+    try:
+        parsed = urlparse(url)
+        components = {
+            "scheme": parsed.scheme,
+            "host": parsed.hostname,
+            "port": parsed.port,
+            "path": parsed.path,
+            "query": parsed.query,
+        }
+        if parsed.scheme not in ("http", "https"):
+            problems.append("Scheme should be http or https")
+        if not parsed.hostname:
+            problems.append("Host is missing")
+    except ValueError:
+        problems.append("URL could not be parsed")
+
+    app.logger.info("url-check url=%s valid=%s", url, not problems)
+    return jsonify({"url": url, "valid": not problems, "components": components, "problems": problems})
 
 
 if __name__ == "__main__":

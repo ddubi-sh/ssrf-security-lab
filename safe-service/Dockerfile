@@ -1,4 +1,4 @@
-# safe-service 컨테이너 이미지
+# content-service 컨테이너 이미지
 FROM python:3.11-slim
 
 # .pyc 파일을 만들지 않고, 로그를 버퍼링 없이 바로 출력합니다.

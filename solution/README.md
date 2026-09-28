@@ -16,7 +16,7 @@ response = requests.get(url)
 ```
 
 사용자가 보낸 URL이 **아무 검증 없이** 그대로 `requests.get()` 에 들어갑니다.
-그래서 `http://internal-service:8001/admin` 을 넣으면 서버가 친절하게
+그래서 `http://monitor-service:8000/reports/2026-09-28` 를 넣으면 서버가 친절하게
 내부 서비스를 대신 호출하고, 그 응답을 사용자에게 돌려줍니다.
 
 ### 수정 코드 (`solution/app_fixed.py`)
@@ -53,10 +53,10 @@ response = requests.get(url, timeout=3, allow_redirects=False)
 | **문자열 타입 확인** | `{"url": {"a": 1}}` 처럼 JSON 객체나 숫자가 오면 파싱 단계에서 예외가 납니다. 먼저 타입을 확인해야 합니다. |
 | **길이 제한** | 수십 KB짜리 URL은 정상 사용자의 입력이 아닙니다. 파싱·로그 처리 비용을 줄이고 비정상 입력을 미리 잘라냅니다. |
 | **스킴 = `http`** | `file:///etc/passwd`, `gopher://`, `dict://` 같은 스킴은 SSRF를 로컬 파일 읽기나 임의 프로토콜 통신으로 확대시킵니다. 필요한 스킴 하나만 허용하는 것이 안전합니다. |
-| **호스트 = `safe-service`** | SSRF의 본질은 "서버가 어디로 요청하는가" 입니다. 목적지 호스트를 고정하면 내부 서비스로는 애초에 요청이 나가지 않습니다. |
-| **포트 = `8000`** | 호스트가 같아도 포트가 다르면 완전히 다른 서비스일 수 있습니다. 포트를 생략한 `http://safe-service/public` 은 80포트를 의미하므로 거부됩니다. |
-| **경로 = `/public`** | 같은 서버라도 `/admin`, `/debug` 같은 다른 경로가 열려 있을 수 있습니다. 필요한 경로만 허용합니다. |
-| **username / password 거부** | `http://safe-service@internal-service:8001/admin` 의 실제 목적지는 `internal-service` 입니다. `@` 앞부분은 사용자정보일 뿐입니다. 문자열만 보고 "safe-service 가 들어 있으니 안전하다"고 판단하면 그대로 속습니다. |
+| **호스트 = `content-service`** | SSRF의 본질은 "서버가 어디로 요청하는가" 입니다. 목적지 호스트를 고정하면 내부 서비스(monitor-service)로는 애초에 요청이 나가지 않습니다. |
+| **포트 = `8000`** | 호스트가 같아도 포트가 다르면 완전히 다른 서비스일 수 있습니다. 포트를 생략한 `http://content-service/public` 은 80포트를 의미하므로 거부됩니다. |
+| **경로 = `/public` 등 허용 목록** | 같은 서버라도 `/reports/2026-09-28`, `/debug` 같은 다른 경로가 열려 있을 수 있습니다. 필요한 경로만 허용합니다. |
+| **username / password 거부** | `http://content-service@monitor-service:8000/reports/2026-09-28` 의 실제 목적지는 `monitor-service` 입니다. `@` 앞부분은 사용자정보일 뿐입니다. 문자열만 보고 "content-service 가 들어 있으니 안전하다"고 판단하면 그대로 속습니다. |
 | **query string 거부** | 이번 실습에 필요 없는 입력 통로를 그냥 닫습니다. 공격 표면은 좁을수록 좋습니다. |
 | **fragment 거부** | `#` 뒤는 브라우저용이며 서버 요청에는 전송되지 않습니다. 존재한다는 것 자체가 검사를 흐리려는 시도일 수 있습니다. |
 | **`ValueError` 처리** | `urlparse()` 는 포트 자리에 숫자가 아닌 값이 있거나 IPv6 대괄호가 깨진 경우 `ValueError` 를 던집니다. 예외가 나면 "알 수 없는 URL"이므로 거부합니다. |
@@ -79,16 +79,16 @@ if "localhost" in url or "127.0.0.1" in url:
 이 코드는 다음 요청을 전혀 막지 못합니다.
 
 ```text
-http://internal-service:8001/admin
+http://monitor-service:8000/reports/2026-09-28
 ```
 
-`internal-service` 라는 이름에는 `localhost` 도 `127.0.0.1` 도 들어 있지 않기 때문입니다.
+`monitor-service` 라는 이름에는 `localhost` 도 `127.0.0.1` 도 들어 있지 않기 때문입니다.
 
 차단 목록 방식이 실패하는 일반적인 이유:
 
 - **개발자가 아는 표현만 막는다.** 내부 호스트 이름, 다른 컨테이너 이름, 사설 IP 대역 등 예상 밖의 표현이 계속 나옵니다.
 - **같은 곳을 가리키는 표현이 너무 많다.** `127.0.0.1`, `127.1`, `0.0.0.0`, `[::1]`, `2130706433` 은 모두 로컬을 가리킵니다.
-- **문자열이 곧 목적지가 아니다.** `http://safe-service@internal-service:8001/` 에는 `safe-service` 가 들어 있지만 실제 목적지는 다릅니다.
+- **문자열이 곧 목적지가 아니다.** `http://content-service@monitor-service:8000/` 에는 `content-service` 가 들어 있지만 실제 목적지는 다릅니다.
 - **목록은 계속 늘어난다.** 막아야 할 것을 세는 방식은 끝나지 않지만, 허용할 것을 세는 방식은 금방 끝납니다.
 
 그래서 **허용 목록 + URL 파싱**이 정답입니다.
@@ -99,11 +99,11 @@ http://internal-service:8001/admin
 
 `requests` 는 기본적으로 3xx 응답을 만나면 `Location` 헤더를 따라 자동으로 다시 요청합니다.
 
-검증을 통과한 `http://safe-service:8000/public` 이라도, 그 서버가
+검증을 통과한 `http://content-service:8000/public` 이라도, 그 서버가
 
 ```http
 HTTP/1.1 302 Found
-Location: http://internal-service:8001/admin
+Location: http://monitor-service:8000/reports/2026-09-28
 ```
 
 를 돌려주면 리다이렉트를 따라가면서 **검증하지 않은 주소로 다시 요청**하게 됩니다.

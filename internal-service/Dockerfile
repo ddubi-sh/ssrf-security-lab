@@ -1,4 +1,4 @@
-# internal-service 컨테이너 이미지
+# monitor-service 컨테이너 이미지
 FROM python:3.11-slim
 
 # .pyc 파일을 만들지 않고, 로그를 버퍼링 없이 바로 출력합니다.
@@ -18,6 +18,6 @@ RUN useradd --create-home --uid 10001 appuser \
 USER appuser
 
 # 컨테이너 내부 포트 (호스트에는 공개하지 않습니다)
-EXPOSE 8001
+EXPOSE 8000
 
 CMD ["python", "app.py"]

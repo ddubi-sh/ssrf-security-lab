@@ -119,6 +119,19 @@ main {
   margin-top: 20px;
 }
 
+.card-title {
+  margin: 0 0 4px;
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.card-hint {
+  margin: 0 0 16px;
+  font-size: 14px;
+  color: var(--text-muted);
+}
+
 /* ---------------------------------------------------------------- 폼 --- */
 .field-label {
   display: block;
@@ -133,7 +146,7 @@ main {
   gap: 10px;
 }
 
-#url-input {
+.input-row input {
   flex: 1 1 auto;
   min-width: 0;
   padding: 11px 13px;
@@ -146,11 +159,11 @@ main {
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
-#url-input::placeholder {
+.input-row input::placeholder {
   color: #9aa4b2;
 }
 
-#url-input:focus {
+.input-row input:focus {
   outline: none;
   border-color: var(--primary);
   box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.14);
@@ -249,6 +262,36 @@ main {
 }
 
 /* ------------------------------------------------------------- 결과 카드 --- */
+.result-card {
+  margin-top: 20px;
+  padding-top: 20px;
+  border-top: 1px solid var(--border);
+}
+
+.preview-head {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 14px;
+}
+
+.preview-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.preview-url {
+  font-size: 13px;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+.preview-content {
+  margin: 0;
+}
+
 .result-meta {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -301,6 +344,68 @@ main {
   background-color: #f8fafc;
   border: 1px solid var(--border);
   border-radius: 8px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* -------------------------------------------------- 저장된 링크 / 상세 --- */
+.saved-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.saved-item {
+  width: 100%;
+  text-align: left;
+  padding: 11px 13px;
+  font: inherit;
+  font-size: 15px;
+  color: var(--text);
+  background-color: #f8fafc;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
+}
+
+.saved-item:hover {
+  border-color: var(--primary);
+  background-color: #f0f5ff;
+}
+
+.saved-item:focus-visible {
+  outline: 3px solid rgba(37, 99, 235, 0.35);
+  outline-offset: 1px;
+}
+
+.detail-box {
+  margin-top: 16px;
+  padding: 16px;
+  background-color: #f8fafc;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.detail-row {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.inline-pre {
+  margin: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono",
+    monospace;
+  font-size: 13px;
+  line-height: 1.5;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
